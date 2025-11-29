@@ -4931,24 +4931,32 @@ EVEN_MORE_QUESTIONS = [
 QUESTION_BANK = QUESTION_BANK + NEW_QUESTIONS + EXTRA_QUESTIONS + MORE_QUESTIONS + EVEN_MORE_QUESTIONS
 
 
-# ----------------------------------
-# TEXT SUMMARY GENERATOR (NEW)
-# ----------------------------------
+# -------------------------------------------------
+# 2. TEXT SUMMARY GENERATION (instead of PDF)
+# -------------------------------------------------
 
 def generate_text_summary(responses):
     """
-    Build a text summary instead of PDF.
-    Returns: plain text string.
+    Build a plain-text summary of the session.
+
+    responses: list of dicts with keys:
+      - question: question dict from QUESTION_BANK
+      - selected_index: ORIGINAL option index chosen (0..n-1)
+      - correct: bool
     """
     lines = []
     lines.append("Anatomy MCQ Session Summary")
     lines.append(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     lines.append(f"Total questions attempted: {len(responses)}")
-    lines.append("-" * 55)
+    num_correct = sum(1 for r in responses if r["correct"])
+    lines.append(f"Total correct: {num_correct}")
+    if responses:
+        lines.append(f"Score: {num_correct / len(responses) * 100:.1f}%")
+    lines.append("-" * 60)
 
     for i, resp in enumerate(responses, start=1):
         q = resp["question"]
-        selected = resp["selected_index"]
+        selected_orig = resp["selected_index"]
         correct_flag = resp["correct"]
         correct_idx = q["answer_index"]
 
@@ -4956,37 +4964,37 @@ def generate_text_summary(responses):
         for idx, opt in enumerate(q["options"]):
             lines.append(f"  {chr(65 + idx)}) {opt}")
 
-        if selected is not None:
-            your_ans = chr(65 + selected)
+        if selected_orig is not None:
+            your_ans_str = chr(65 + selected_orig)
         else:
-            your_ans = "Not answered"
+            your_ans_str = "Not answered"
 
-        correct_ans = chr(65 + correct_idx)
-        result = "Correct" if correct_flag else "Incorrect"
+        correct_ans_str = chr(65 + correct_idx)
+        result_str = "Correct" if correct_flag else "Incorrect"
 
-        lines.append(f"Your answer: {your_ans}")
-        lines.append(f"Correct answer: {correct_ans}")
-        lines.append(f"Result: {result}")
+        lines.append(f"Your answer: {your_ans_str}")
+        lines.append(f"Correct answer: {correct_ans_str}")
+        lines.append(f"Result: {result_str}")
         lines.append(f"Explanation: {q['explanation']}")
-        lines.append("-" * 55)
+        lines.append("-" * 60)
 
     return "\n".join(lines)
 
 
-# ----------------------------------
-# STREAMLIT APP (UNCHANGED LOGIC)
-# ----------------------------------
+# -------------------------------------------------
+# 3. STREAMLIT APP SETUP & SESSION STATE
+# -------------------------------------------------
 
 st.set_page_config(page_title="Anatomy MCQ Trainer", layout="wide")
 
 st.title("🧠 Anatomy MCQ Trainer")
 st.write(
     "Use this app to drill anatomy and related basic science topics. "
-    "After each question, you will see feedback and an explanation. "
-    "At the end, you can download a summary of your session."
+    "After each question, you will see whether you were correct and get a clear explanation. "
+    "At the end – or whenever you choose to stop – you can download a text summary of your session."
 )
 
-# Session State
+# Initialise session state
 if "quiz_started" not in st.session_state:
     st.session_state.quiz_started = False
 if "question_order" not in st.session_state:
@@ -5001,8 +5009,14 @@ if "selected_option" not in st.session_state:
     st.session_state.selected_option = None
 if "selected_topic" not in st.session_state:
     st.session_state.selected_topic = "All topics"
+if "options_order" not in st.session_state:
+    # maps question id -> list of original option indices in the randomized display order
+    st.session_state.options_order = {}
 
-# Sidebar
+# -------------------------------------------------
+# 4. SIDEBAR FILTERS & CONTROL
+# -------------------------------------------------
+
 all_topics = sorted(list({q["topic"] for q in QUESTION_BANK}))
 topic_choice = st.sidebar.selectbox(
     "Filter by topic",
@@ -5019,7 +5033,13 @@ num_available = len([
 st.sidebar.write(f"Questions available for this selection: **{num_available}**")
 shuffle_questions = st.sidebar.checkbox("Randomise order", value=True)
 
-# Quiz start/reset
+# NEW: stop anytime and go to summary
+finish_now = st.sidebar.button("⏹️ Finish quiz now & view summary")
+
+# -------------------------------------------------
+# 5. QUIZ CONTROL
+# -------------------------------------------------
+
 def start_quiz():
     filtered_indices = [
         i for i, q in enumerate(QUESTION_BANK)
@@ -5035,27 +5055,41 @@ def start_quiz():
     st.session_state.show_explanation = False
     st.session_state.responses = []
     st.session_state.selected_option = None
+    st.session_state.options_order = {}  # reset option orders per question
+
 
 if not st.session_state.quiz_started:
     st.info(
-        "Select a topic in the sidebar and click **Start / Restart quiz** to begin."
+        "Select a topic in the sidebar (or keep **All topics**) and click **Start / Restart quiz** "
+        "to begin. Questions will appear one by one with explanations after each answer."
     )
     if st.button("Start / Restart quiz"):
         if num_available == 0:
-            st.error("No questions for this topic yet.")
+            st.error("No questions available for this topic yet.")
         else:
             start_quiz()
 else:
     if st.button("Restart quiz"):
         start_quiz()
 
+# If quiz not started or no questions, stop here
 if not st.session_state.quiz_started or len(st.session_state.question_order) == 0:
     st.stop()
 
-# Current question
+# Handle "Finish quiz now" – jump straight to summary
+if finish_now:
+    st.session_state.current_q_index = len(st.session_state.question_order)
+    st.session_state.show_explanation = False
+    st.rerun()
+
+# -------------------------------------------------
+# 6. CURRENT QUESTION DISPLAY
+# -------------------------------------------------
+
 current_idx = st.session_state.current_q_index
 if current_idx >= len(st.session_state.question_order):
-    st.success("You have completed all questions!")
+    # Quiz finished – summary section will handle it
+    st.success("You have completed the quiz or chosen to finish early.")
 else:
     q_index = st.session_state.question_order[current_idx]
     q = QUESTION_BANK[q_index]
@@ -5064,8 +5098,27 @@ else:
     st.markdown(f"**Topic:** {q['topic']}")
     st.write(q["question"])
 
-    options_labels = [f"{chr(65 + i)}) {opt}" for i, opt in enumerate(q["options"])]
+    # ---------------------------------------
+    # Randomised but STABLE option order
+    # ---------------------------------------
+    if "options_order" not in st.session_state:
+        st.session_state.options_order = {}
 
+    qid = q["id"]
+    if qid not in st.session_state.options_order:
+        order = list(range(len(q["options"])))
+        random.shuffle(order)
+        st.session_state.options_order[qid] = order
+    else:
+        order = st.session_state.options_order[qid]
+
+    # options_labels[i] corresponds to display index i -> original index order[i]
+    options_labels = [
+        f"{chr(65 + i)}) {q['options'][orig_idx]}"
+        for i, orig_idx in enumerate(order)
+    ]
+
+    # Radio for answer choice (indexes 0..len(options)-1 in display order)
     selected = st.radio(
         "Choose one answer:",
         options=list(range(len(q["options"]))),
@@ -5078,14 +5131,21 @@ else:
 
     col1, col2 = st.columns(2)
 
+    # --------------------------
+    # Submit answer
+    # --------------------------
     with col1:
         if st.button("Submit answer"):
-            correct = (selected == q["answer_index"])
+            # Map selected display index back to original option index
+            order = st.session_state.options_order[qid]
+            original_index = order[selected]
+
+            correct = (original_index == q["answer_index"])
             st.session_state.show_explanation = True
 
             resp = {
                 "question": q,
-                "selected_index": selected,
+                "selected_index": original_index,  # store ORIGINAL index
                 "correct": correct,
             }
             if len(st.session_state.responses) > current_idx:
@@ -5093,29 +5153,44 @@ else:
             else:
                 st.session_state.responses.append(resp)
 
+    # --------------------------
+    # Next question
+    # --------------------------
     with col2:
+        # Only active once explanation is shown
         if st.session_state.show_explanation:
             if st.button("Next question ➜"):
                 st.session_state.current_q_index += 1
                 st.session_state.show_explanation = False
                 st.session_state.selected_option = None
-                st.experimental_rerun()
+                st.rerun()  # modern equivalent of st.experimental_rerun()
 
+    # --------------------------
+    # Feedback & explanation
+    # --------------------------
     if st.session_state.show_explanation and len(st.session_state.responses) > current_idx:
         resp = st.session_state.responses[current_idx]
-        if resp["correct"]:
+        correct = resp["correct"]
+
+        if correct:
             st.success("✅ Correct!")
         else:
-            correct_letter = chr(65 + q["answer_index"])
-            st.error(f"❌ Incorrect. Correct answer is **{correct_letter}**.")
+            # compute which LETTER is correct in the displayed order
+            order = st.session_state.options_order[qid]
+            correct_display_index = order.index(q["answer_index"])
+            correct_letter = chr(65 + correct_display_index)
+            st.error(f"❌ Incorrect. The correct answer is **{correct_letter}**.")
+
         st.markdown("**Explanation:**")
         st.write(q["explanation"])
 
-# Summary (NO PDF, TEXT DOWNLOAD)
+# -------------------------------------------------
+# 7. SESSION SUMMARY & REVIEW
+# -------------------------------------------------
+
 if st.session_state.current_q_index >= len(st.session_state.question_order):
     total = len(st.session_state.responses)
     score = sum(1 for r in st.session_state.responses if r["correct"])
-
     if total > 0:
         st.markdown("---")
         st.subheader("Session Summary")
@@ -5123,11 +5198,32 @@ if st.session_state.current_q_index >= len(st.session_state.question_order):
         st.write(f"Correct answers: **{score}**")
         st.write(f"Score: **{(score / total) * 100:.1f}%**")
 
+        # Detailed review of wrong answers
+        wrong_responses = [r for r in st.session_state.responses if not r["correct"]]
+        if wrong_responses:
+            st.markdown("### Questions you got wrong")
+            for i, resp in enumerate(wrong_responses, start=1):
+                q = resp["question"]
+                selected_orig = resp["selected_index"]
+                correct_idx = q["answer_index"]
+
+                your_letter = chr(65 + selected_orig) if selected_orig is not None else "–"
+                correct_letter = chr(65 + correct_idx)
+
+                st.markdown(f"**{i}. [{q['topic']}] {q['question']}**")
+                st.write(f"Your answer: {your_letter}) {q['options'][selected_orig] if selected_orig is not None else 'Not answered'}")
+                st.write(f"Correct answer: {correct_letter}) {q['options'][correct_idx]}")
+                st.write(f"Explanation: {q['explanation']}")
+                st.markdown("---")
+        else:
+            st.info("You did not get any questions wrong in this session. 🎉")
+
+        # Downloadable text summary
         summary_text = generate_text_summary(st.session_state.responses)
         st.download_button(
             label="📄 Download session summary (TXT)",
             data=summary_text,
-            file_name=f"anatomy_mcq_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+            file_name=f"anatomy_mcq_session_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
             mime="text/plain",
         )
     else:
