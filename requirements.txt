@@ -1,3 +1,7 @@
-streamlit==1.40.0  # for example
-fpdf2
+streamlit
 fpdf
+reportlab
+pillow
+pandas
+fpdf2
+
