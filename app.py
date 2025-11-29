@@ -5,9 +5,10 @@
 #   pip install streamlit fpdf
 #   streamlit run app.py
 
+
+
 import streamlit as st
-from fpdf import FPDF
-from io import BytesIO
+from io import StringIO
 import random
 from datetime import datetime
 
@@ -4930,33 +4931,20 @@ EVEN_MORE_QUESTIONS = [
 QUESTION_BANK = QUESTION_BANK + NEW_QUESTIONS + EXTRA_QUESTIONS + MORE_QUESTIONS + EVEN_MORE_QUESTIONS
 
 
-# -----------------------------
-# 2. PDF GENERATION
-# -----------------------------
+# ----------------------------------
+# TEXT SUMMARY GENERATOR (NEW)
+# ----------------------------------
 
-def generate_pdf(responses):
+def generate_text_summary(responses):
     """
-    responses: list of dicts with keys:
-      - question (dict from QUESTION_BANK)
-      - selected_index (int or None)
-      - correct (bool or None)
-    Returns: bytes of a PDF file.
+    Build a text summary instead of PDF.
+    Returns: plain text string.
     """
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Anatomy MCQ Session Summary", ln=True, align="C")
-    pdf.ln(5)
-
-    pdf.set_font("Arial", "", 11)
-    pdf.multi_cell(
-        0,
-        6,
-        f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        f"Total questions attempted: {len(responses)}",
-    )
-    pdf.ln(5)
+    lines = []
+    lines.append("Anatomy MCQ Session Summary")
+    lines.append(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"Total questions attempted: {len(responses)}")
+    lines.append("-" * 55)
 
     for i, resp in enumerate(responses, start=1):
         q = resp["question"]
@@ -4964,51 +4952,41 @@ def generate_pdf(responses):
         correct_flag = resp["correct"]
         correct_idx = q["answer_index"]
 
-        pdf.set_font("Arial", "B", 12)
-        pdf.multi_cell(0, 7, f"Q{i}. [{q['topic']}] {q['question']}")
-        pdf.ln(1)
-
-        pdf.set_font("Arial", "", 11)
+        lines.append(f"\nQ{i}. [{q['topic']}] {q['question']}")
         for idx, opt in enumerate(q["options"]):
-            prefix = chr(65 + idx) + ") "
-            pdf.multi_cell(0, 6, f"{prefix}{opt}")
+            lines.append(f"  {chr(65 + idx)}) {opt}")
 
         if selected is not None:
-            your_ans_str = chr(65 + selected)
+            your_ans = chr(65 + selected)
         else:
-            your_ans_str = "Not answered"
+            your_ans = "Not answered"
 
-        correct_ans_str = chr(65 + correct_idx)
-        result_str = "Correct" if correct_flag else "Incorrect"
+        correct_ans = chr(65 + correct_idx)
+        result = "Correct" if correct_flag else "Incorrect"
 
-        pdf.ln(1)
-        pdf.multi_cell(0, 6, f"Your answer: {your_ans_str}")
-        pdf.multi_cell(0, 6, f"Correct answer: {correct_ans_str}")
-        pdf.multi_cell(0, 6, f"Result: {result_str}")
-        pdf.ln(1)
+        lines.append(f"Your answer: {your_ans}")
+        lines.append(f"Correct answer: {correct_ans}")
+        lines.append(f"Result: {result}")
+        lines.append(f"Explanation: {q['explanation']}")
+        lines.append("-" * 55)
 
-        pdf.set_font("Arial", "I", 11)
-        pdf.multi_cell(0, 6, "Explanation: " + q["explanation"])
-        pdf.ln(4)
+    return "\n".join(lines)
 
-    # Output to bytes
-    pdf_bytes = pdf.output(dest="S").encode("latin1")
-    return pdf_bytes
 
-# -----------------------------
-# 3. STREAMLIT APP
-# -----------------------------
+# ----------------------------------
+# STREAMLIT APP (UNCHANGED LOGIC)
+# ----------------------------------
 
 st.set_page_config(page_title="Anatomy MCQ Trainer", layout="wide")
 
 st.title("🧠 Anatomy MCQ Trainer")
 st.write(
     "Use this app to drill anatomy and related basic science topics. "
-    "After each question, you will see whether you were correct and get a clear explanation. "
-    "At the end, you can download a PDF summary of your session."
+    "After each question, you will see feedback and an explanation. "
+    "At the end, you can download a summary of your session."
 )
 
-# Initialise session state
+# Session State
 if "quiz_started" not in st.session_state:
     st.session_state.quiz_started = False
 if "question_order" not in st.session_state:
@@ -5024,7 +5002,7 @@ if "selected_option" not in st.session_state:
 if "selected_topic" not in st.session_state:
     st.session_state.selected_topic = "All topics"
 
-# Sidebar filters
+# Sidebar
 all_topics = sorted(list({q["topic"] for q in QUESTION_BANK}))
 topic_choice = st.sidebar.selectbox(
     "Filter by topic",
@@ -5041,6 +5019,7 @@ num_available = len([
 st.sidebar.write(f"Questions available for this selection: **{num_available}**")
 shuffle_questions = st.sidebar.checkbox("Randomise order", value=True)
 
+# Quiz start/reset
 def start_quiz():
     filtered_indices = [
         i for i, q in enumerate(QUESTION_BANK)
@@ -5059,27 +5038,24 @@ def start_quiz():
 
 if not st.session_state.quiz_started:
     st.info(
-        "Select a topic in the sidebar (or keep **All topics**) and click **Start / Restart quiz** "
-        "to begin. Questions will appear one by one with explanations after each answer."
+        "Select a topic in the sidebar and click **Start / Restart quiz** to begin."
     )
     if st.button("Start / Restart quiz"):
         if num_available == 0:
-            st.error("No questions available for this topic yet.")
+            st.error("No questions for this topic yet.")
         else:
             start_quiz()
 else:
     if st.button("Restart quiz"):
         start_quiz()
 
-# If quiz not started or no questions, stop here
 if not st.session_state.quiz_started or len(st.session_state.question_order) == 0:
     st.stop()
 
-# Get current question
+# Current question
 current_idx = st.session_state.current_q_index
 if current_idx >= len(st.session_state.question_order):
-    # Quiz finished
-    st.success("You have completed all questions for this session.")
+    st.success("You have completed all questions!")
 else:
     q_index = st.session_state.question_order[current_idx]
     q = QUESTION_BANK[q_index]
@@ -5090,7 +5066,6 @@ else:
 
     options_labels = [f"{chr(65 + i)}) {opt}" for i, opt in enumerate(q["options"])]
 
-    # Radio for answer choice
     selected = st.radio(
         "Choose one answer:",
         options=list(range(len(q["options"]))),
@@ -5105,12 +5080,9 @@ else:
 
     with col1:
         if st.button("Submit answer"):
-            # Only evaluate once per question
             correct = (selected == q["answer_index"])
             st.session_state.show_explanation = True
 
-            # Store response; if we already stored for this question in this session,
-            # overwrite the last one.
             resp = {
                 "question": q,
                 "selected_index": selected,
@@ -5122,7 +5094,6 @@ else:
                 st.session_state.responses.append(resp)
 
     with col2:
-        # "Next question" button only active once explanation is shown
         if st.session_state.show_explanation:
             if st.button("Next question ➜"):
                 st.session_state.current_q_index += 1
@@ -5130,24 +5101,21 @@ else:
                 st.session_state.selected_option = None
                 st.experimental_rerun()
 
-    # Show feedback and explanation
     if st.session_state.show_explanation and len(st.session_state.responses) > current_idx:
         resp = st.session_state.responses[current_idx]
-        correct = resp["correct"]
-
-        if correct:
+        if resp["correct"]:
             st.success("✅ Correct!")
         else:
             correct_letter = chr(65 + q["answer_index"])
-            st.error(f"❌ Incorrect. The correct answer is **{correct_letter}**.")
-
+            st.error(f"❌ Incorrect. Correct answer is **{correct_letter}**.")
         st.markdown("**Explanation:**")
         st.write(q["explanation"])
 
-# If we have reached or passed the end, show summary and PDF download
+# Summary (NO PDF, TEXT DOWNLOAD)
 if st.session_state.current_q_index >= len(st.session_state.question_order):
     total = len(st.session_state.responses)
     score = sum(1 for r in st.session_state.responses if r["correct"])
+
     if total > 0:
         st.markdown("---")
         st.subheader("Session Summary")
@@ -5155,12 +5123,12 @@ if st.session_state.current_q_index >= len(st.session_state.question_order):
         st.write(f"Correct answers: **{score}**")
         st.write(f"Score: **{(score / total) * 100:.1f}%**")
 
-        pdf_bytes = generate_pdf(st.session_state.responses)
+        summary_text = generate_text_summary(st.session_state.responses)
         st.download_button(
-            label="📄 Download PDF summary",
-            data=pdf_bytes,
-            file_name=f"anatomy_mcq_session_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-            mime="application/pdf",
+            label="📄 Download session summary (TXT)",
+            data=summary_text,
+            file_name=f"anatomy_mcq_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+            mime="text/plain",
         )
     else:
         st.info("You did not answer any questions in this session.")
