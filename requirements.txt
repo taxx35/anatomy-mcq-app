@@ -1,7 +1,4 @@
 streamlit
 fpdf
-reportlab
-pillow
-pandas
-fpdf2
+
 
